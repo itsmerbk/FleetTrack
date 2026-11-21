@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FleetTrack — Live Delivery Dispatch & SLA Radar Console</title>
+  <style>
+    :root {
+      --bg: #070b12;
+      --surface: #101723;
+      --border: #1e2c40;
+      --text: #e6edf3;
+      --muted: #8b9bb4;
+      --emerald: #10b981;
+      --sky: #38bdf8;
+      --amber: #f59e0b;
+      --red: #ef4444;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); }
+    header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 14px 24px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; }
+    header h1 { margin: 0; font-size: 20px; color: var(--emerald); }
+    .hdr-btns { display: flex; gap: 10px; }
+    .btn { padding: 8px 14px; border-radius: 8px; border: none; font-weight: 700; cursor: pointer; font-size: 12.5px; }
+    .btn-primary { background: var(--emerald); color: #03261b; }
+    .btn-sky { background: var(--sky); color: #041521; }
+    .btn-amber { background: var(--amber); color: #1f1202; }
+    .container { max-width: 1320px; margin: 20px auto; padding: 0 20px; }
+    .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; margin-bottom: 20px; }
+    .kpi { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 15px; }
+    .kpi .label { font-size: 12px; color: var(--muted); text-transform: uppercase; }
+    .kpi .val { font-size: 26px; font-weight: 800; margin-top: 5px; }
+    .grid { display: grid; grid-template-columns: 1.15fr 1fr; gap: 20px; }
+    @media (max-width: 980px) { .grid { grid-template-columns: 1fr; } }
+    .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
+    .panel h2 { margin: 0 0 12px; font-size: 15px; color: var(--sky); }
+    canvas { width: 100%; height: auto; background: #080d16; border: 1px solid #1d2b3f; border-radius: 10px; display: block; }
+    .legend { display: flex; gap: 16px; font-size: 12px; color: var(--muted); margin-top: 10px; flex-wrap: wrap; }
+    .order-card { background: #0b101a; border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; }
+    .badge { padding: 3px 7px; border-radius: 5px; font-size: 10.5px; font-weight: 700; }
+    .UNASSIGNED { background: rgba(245,158,11,0.2); color: var(--amber); }
+    .PICKING_UP { background: rgba(56,189,248,0.2); color: var(--sky); }
+    .IN_TRANSIT { background: rgba(16,185,129,0.2); color: var(--emerald); }
+    .DELIVERED { background: rgba(139,155,180,0.18); color: var(--muted); }
+    .modal-bg { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.75); align-items: center; justify-content: center; z-index: 50; }
+    .modal { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 22px; width: 92%; max-width: 430px; }
+    .field { margin-bottom: 11px; }
+    .field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+    .field input { width: 100%; padding: 8px 10px; border-radius: 7px; border: 1px solid var(--border); background: #070b12; color: var(--text); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>FleetTrack · Live Delivery Dispatch & SLA Radar</h1>
+    <div class="hdr-btns">
+      <button class="btn btn-amber" onclick="stepTick()">▶ Step Rider Telemetry</button>
+      <button class="btn btn-sky" id="auto-btn" onclick="toggleAutoPilot()">Auto-Pilot: OFF</button>
+      <button class="btn btn-primary" onclick="openModal()">+ New Express Order</button>
+    </div>
+  </header>
+
+  <div class="container">
+    <div class="kpis">
+      <div class="kpi"><div class="label">Available Riders</div><div class="val" style="color:var(--emerald)" id="k-riders">0 / 5</div></div>
+      <div class="kpi"><div class="label">Active Orders</div><div class="val" style="color:var(--sky)" id="k-active">0</div></div>
+      <div class="kpi"><div class="label">SLA Breaches</div><div class="val" style="color:var(--red)" id="k-sla">0</div></div>
+      <div class="kpi"><div class="label">Completed Deliveries</div><div class="val" id="k-done">0</div></div>
+    </div>
+
+    <div class="grid">
+      <div class="panel">
+        <h2>Live City Grid Telemetry (HTML5 Canvas Radar)</h2>
+        <canvas id="radar" width="640" height="420"></canvas>
+        <div class="legend">
+          <span>● <strong style="color:#10b981">Green Dot:</strong> Available Rider</span>
+          <span>● <strong style="color:#38bdf8">Blue Dot:</strong> Busy Rider</span>
+          <span>▲ <strong style="color:#f59e0b">Amber Triangle:</strong> Pickup Hub</span>
+          <span>■ <strong style="color:#ef4444">Red Square:</strong> Customer Drop</span>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Dispatch Queue & Live SLA Monitor</h2>
+        <div id="orders-list"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-bg" id="order-modal">
+    <div class="modal">
+      <h2 style="margin-top:0">Create Express Delivery Order</h2>
+      <div class="field"><label>Customer Name</label><input id="o-cust" placeholder="e.g. Siddharth R" /></div>
+      <div class="field"><label>Pickup Dark Store / Hub</label><input id="o-hub" value="OMR Tech Hub" /></div>
+      <div class="field"><label>Customer Drop Zone</label><input id="o-drop" value="Perungudi Phase 2" /></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <div class="field"><label>Pickup X (10-90)</label><input id="o-px" type="number" value="28" /></div>
+        <div class="field"><label>Pickup Y (10-90)</label><input id="o-py" type="number" value="30" /></div>
+        <div class="field"><label>Drop X (10-90)</label><input id="o-dx" type="number" value="80" /></div>
+        <div class="field"><label>Drop Y (10-90)</label><input id="o-dy" type="number" value="72" /></div>
+      </div>
+      <div class="field"><label>SLA Target (Minutes)</label><input id="o-sla" type="number" value="20" /></div>
+      <div style="display:flex;gap:10px;margin-top:12px">
+        <button class="btn" style="flex:1;background:#1e2c40;color:#fff" onclick="closeModal()">Cancel</button>
+        <button class="btn btn-primary" style="flex:1" onclick="submitOrder()">Queue Delivery</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let state = { metrics: {}, riders: [], deliveries: [] };
+    let autoTimer = null;
+
+    async function loadState() {
+      const res = await fetch('/api/state');
+      state = await res.json();
+      document.getElementById('k-riders').textContent = `${state.metrics.availableRiders} / ${state.metrics.totalRiders}`;
+      document.getElementById('k-active').textContent = state.metrics.activeOrders;
+      document.getElementById('k-sla').textContent = state.metrics.slaBreaches;
+      document.getElementById('k-done').textContent = state.metrics.delivered;
+      renderOrders();
+      drawRadar();
+    }
+
+    function drawRadar() {
+      const c = document.getElementById('radar');
+      const ctx = c.getContext('2d');
+      ctx.clearRect(0, 0, c.width, c.height);
+
+      // Grid lines
+      ctx.strokeStyle = '#152234';
+      ctx.lineWidth = 1;
+      for (let x = 0; x <= c.width; x += 64) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, c.height); ctx.stroke(); }
+      for (let y = 0; y <= c.height; y += 42) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(c.width, y); ctx.stroke(); }
+
+      const toX = v => (v / 100) * c.width;
+      const toY = v => (v / 100) * c.height;
+
+      // Active delivery routes + pickup/drop pins
+      state.deliveries.filter(d => d.status !== 'DELIVERED').forEach(d => {
+        const px = toX(d.pickupX), py = toY(d.pickupY);
+        const dx = toX(d.dropX), dy = toY(d.dropY);
+
+        ctx.save();
+        ctx.setLineDash([5, 5]);
+        ctx.strokeStyle = d.status === 'UNASSIGNED' ? '#f59e0b' : '#38bdf8';
+        ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        ctx.moveTo(px, py);
+        ctx.lineTo(dx, dy);
+        ctx.stroke();
+        ctx.restore();
+
+        // Pickup triangle
+        ctx.fillStyle = '#f59e0b';
+        ctx.beginPath();
+        ctx.moveTo(px, py - 7); ctx.lineTo(px - 6, py + 5); ctx.lineTo(px + 6, py + 5); ctx.closePath(); ctx.fill();
+
+        // Drop square
+        ctx.fillStyle = '#ef4444';
+        ctx.fillRect(dx - 5, dy - 5, 10, 10);
+
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = '11px sans-serif';
+        ctx.fillText(d.trackingCode, px + 8, py - 4);
+      });
+
+      // Riders
+      state.riders.forEach(r => {
+        const rx = toX(r.x), ry = toY(r.y);
+        ctx.fillStyle = r.status === 'AVAILABLE' ? '#10b981' : '#38bdf8';
+        ctx.beginPath();
+        ctx.arc(rx, ry, 7, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = '#e6edf3';
+        ctx.font = 'bold 11px monospace';
+        ctx.fillText(`${r.riderCode} (${r.riderName.split(' ')[0]})`, rx + 10, ry + 4);
+      });
+    }
+
+    function renderOrders() {
+      const box = document.getElementById('orders-list');
+      box.innerHTML = state.deliveries.map(d => {
+        let actionBtn = '';
+        if (d.status === 'UNASSIGNED') {
+          actionBtn = `<button class="btn btn-primary" onclick="dispatchOrder(${d.id})">Auto-Dispatch Nearest Rider</button>`;
+        } else if (d.status !== 'DELIVERED') {
+          actionBtn = `<button class="btn btn-sky" onclick="completeOrder(${d.id})">Confirm Delivered</button>`;
+        }
+        const slaTag = d.slaBreached ? '<span style="color:var(--red);font-weight:700"> · SLA BREACH</span>' : '';
+        return `
+          <div class="order-card">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <strong>${d.trackingCode} · ${d.customerName}</strong>
+              <span class="badge ${d.status}">${d.status}</span>
+            </div>
+            <div style="font-size:12px;color:var(--muted);margin:5px 0">
+              ${d.pickupHub} → ${d.dropZone} · Rider: <strong>${d.assignedRider || 'Pending'}</strong><br/>
+              Elapsed: ${d.elapsedMins.toFixed(1)}m / ${d.slaMins}m SLA${slaTag}
+            </div>
+            ${actionBtn}
+          </div>
+        `;
+      }).join('');
+    }
+
+    async function dispatchOrder(orderId) {
+      const res = await fetch('/api/dispatch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ orderId: String(orderId) }) });
+      const data = await res.json();
+      if (!data.ok) alert(data.error);
+      loadState();
+    }
+
+    async function stepTick() {
+      await fetch('/api/tick', { method: 'POST' });
+      loadState();
+    }
+
+    function toggleAutoPilot() {
+      const btn = document.getElementById('auto-btn');
+      if (autoTimer) {
+        clearInterval(autoTimer);
+        autoTimer = null;
+        btn.textContent = 'Auto-Pilot: OFF';
+      } else {
+        autoTimer = setInterval(stepTick, 1500);
+        btn.textContent = 'Auto-Pilot: ON';
+      }
+    }
+
+    async function completeOrder(orderId) {
+      await fetch('/api/complete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ orderId: String(orderId) }) });
+      loadState();
+    }
+
+    function openModal() { document.getElementById('order-modal').style.display = 'flex'; }
+    function closeModal() { document.getElementById('order-modal').style.display = 'none'; }
+
+    async function submitOrder() {
+      const payload = {
+        customerName: document.getElementById('o-cust').value || 'Express Customer',
+        pickupHub: document.getElementById('o-hub').value,
+        dropZone: document.getElementById('o-drop').value,
+        pickupX: document.getElementById('o-px').value,
+        pickupY: document.getElementById('o-py').value,
+        dropX: document.getElementById('o-dx').value,
+        dropY: document.getElementById('o-dy').value,
+        slaMins: document.getElementById('o-sla').value
+      };
+      await fetch('/api/orders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      closeModal();
+      loadState();
+    }
+
+    loadState();
+    setInterval(loadState, 3500);
+  </script>
+</body>
+</html>
